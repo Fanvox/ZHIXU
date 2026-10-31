@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 240 4% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 4% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 4% 12%;
+
+    --primary: 240 4% 10%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 4% 95%;
+    --secondary-foreground: 240 4% 12%;
+
+    --muted: 240 4% 95%;
+    --muted-foreground: 240 4% 45%;
+
+    --accent: 240 4% 92%;
+    --accent-foreground: 240 4% 10%;
+
+    --destructive: 0 68% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 150 60% 36%;
+    --warning: 33 88% 44%;
+    --info: 199 82% 40%;
+
+    --border: 240 5% 88%;
+    --input: 240 5% 88%;
+    --ring: 240 4% 10%;
+
+    /* 语义状态 —— 代码语法高亮风格 */
+    --mastered: 211 88% 45%; /* keyword blue */
+    --learning: 33 88% 46%; /* number amber */
+    --review: 0 70% 50%; /* error red */
+    --untouched: 220 8% 60%; /* comment gray */
+
+    --syntax-blue: 211 88% 45%;
+    --syntax-green: 150 60% 36%;
+    --syntax-amber: 33 88% 46%;
+    --syntax-red: 0 70% 50%;
+    --syntax-cyan: 187 80% 38%;
+    --syntax-purple: 288 50% 46%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 240 5% 7%;
+    --foreground: 0 0% 96%;
+
+    --card: 240 5% 10%;
+    --card-foreground: 0 0% 96%;
+
+    --popover: 240 5% 10%;
+    --popover-foreground: 0 0% 96%;
+
+    --primary: 0 0% 96%;
+    --primary-foreground: 240 5% 7%;
+
+    --secondary: 240 5% 14%;
+    --secondary-foreground: 0 0% 96%;
+
+    --muted: 240 5% 14%;
+    --muted-foreground: 240 4% 63%;
+
+    --accent: 240 5% 17%;
+    --accent-foreground: 0 0% 96%;
+
+    --destructive: 0 72% 62%;
+    --destructive-foreground: 240 5% 7%;
+    --success: 150 62% 56%;
+    --warning: 36 92% 60%;
+    --info: 199 88% 62%;
+
+    --border: 240 5% 17%;
+    --input: 240 5% 20%;
+    --ring: 0 0% 96%;
+
+    --mastered: 211 100% 66%;
+    --learning: 38 92% 62%;
+    --review: 0 78% 66%;
+    --untouched: 220 8% 42%;
+
+    --syntax-blue: 211 100% 66%;
+    --syntax-green: 150 62% 56%;
+    --syntax-amber: 38 92% 62%;
+    --syntax-red: 0 78% 66%;
+    --syntax-cyan: 187 88% 62%;
+    --syntax-purple: 288 60% 64%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  ::selection {
+    @apply bg-foreground/15;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+}
+
+/* React Flow overrides for Zhixu's visual identity */
+.react-flow__node {
+  font-family: inherit;
+}
+.react-flow__edge-path {
+  stroke-width: 1.75;
+}
+.react-flow__controls {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+.react-flow__controls-button {
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+.react-flow__controls-button:hover {
+  background: hsl(var(--muted));
+}
+.react-flow__attribution {
+  background: transparent;
+}
