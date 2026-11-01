@@ -25,13 +25,9 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 已登录访问登录/注册页 → 跳首页
-  if (token && AUTH_PAGES.has(pathname)) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/";
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
+  // 注意：不再根据“是否有 Cookie”把登录页重定向回首页，
+  // 否则失效的旧 Cookie 会导致 / 与 /login 之间无限循环。
+  // “已登录访问登录页”的重定向改由登录/注册页在客户端自行判断（见 auth/me）。
 
   return NextResponse.next();
 }

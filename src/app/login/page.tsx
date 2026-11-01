@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Network, Sparkles } from "lucide-react";
@@ -17,6 +17,15 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // 已登录则直接回首页（替代中间件，避免旧 Cookie 造成死循环）
+  useEffect(() => {
+    api.get("/api/auth/me").then(() => {
+      router.push("/");
+      router.refresh();
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
