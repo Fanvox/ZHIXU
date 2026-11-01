@@ -2,7 +2,7 @@
 import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { run } from "../db/driver";
-import { getDocument, updateDocumentStatus, addChunks, deleteDocument } from "../db/repo";
+import { getDocument, updateDocumentStatus, addChunks, deleteChunks, deleteDocument } from "../db/repo";
 import { parseDocument } from "../parser";
 import { extractAndSave, type ExtractionResult } from "./knowledge";
 
@@ -43,6 +43,8 @@ export async function processDocument(documentId: string, userId: string): Promi
     const result = await parseDocument(data, doc.mime_type, doc.filename);
     updateDocumentStatus(documentId, "extracting", { page_count: result.page_count ?? undefined });
 
+    // 重新处理时先清掉旧分块，避免重复
+    deleteChunks(documentId);
     addChunks(
       documentId,
       result.chunks.map((c) => ({

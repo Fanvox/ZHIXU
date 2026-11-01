@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ courseId: string }> };
 
-const MAX_SIZE = (Number(process.env.MAX_UPLOAD_SIZE_MB) || 25) * 1024 * 1024;
+const MAX_SIZE = (Number(process.env.MAX_UPLOAD_SIZE_MB) || 100) * 1024 * 1024;
 
 export async function GET(_req: Request, { params }: Params) {
   try {

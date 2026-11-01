@@ -339,6 +339,10 @@ export function addChunks(
   }
 }
 
+export function deleteChunks(documentId: string): void {
+  run("DELETE FROM document_chunks WHERE document_id = ?", [documentId]);
+}
+
 // ---------------- Knowledge Nodes & Edges ----------------
 
 function rowToNode(r: Record<string, unknown>): KnowledgeNode {

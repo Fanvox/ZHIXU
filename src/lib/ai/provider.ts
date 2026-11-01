@@ -55,7 +55,7 @@ export async function chatCompletion(
   if (!cfg.apiKey) return null;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
+  const timer = setTimeout(() => controller.abort(), 300_000);
   try {
     const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
       method: "POST",
@@ -105,7 +105,7 @@ export async function chatCompletionJSON<T extends z.ZodTypeAny>(
       { role: "system", content: `${sysPrompt}\n只输出合法 JSON，不要包含任何解释或 Markdown 代码块标记。` },
       ...messages.filter((m) => m.role !== "system"),
     ],
-    { model: opts.model, temperature: opts.temperature ?? 0.2, maxTokens: 6000 }
+    { model: opts.model, temperature: opts.temperature ?? 0.2, maxTokens: 16000 }
   );
   if (res == null) return null;
 

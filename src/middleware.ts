@@ -37,5 +37,6 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // 排除 API 路由（API 各自鉴权，且避免中间件 10MB 请求体限制影响文件上传）
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api).*)"],
 };
