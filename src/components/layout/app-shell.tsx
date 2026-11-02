@@ -64,17 +64,27 @@ interface MeData {
   user: { id: string; name: string; email: string };
 }
 
+/**
+ * 应用外壳。
+ *
+ * 登录 / 注册页只渲染纯内容，不渲染侧边栏，也**不请求 `/api/auth/me`**。
+ * 原因：未登录时该接口返回 401，会触发客户端「未登录 → 跳转登录页」逻辑，
+ * 导致注册页刚打开就被弹回登录页。
+ */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const me = useFetch<MeData>("/api/auth/me");
-  const { t } = useI18n();
-
   const isAuthPage = pathname === "/login" || pathname === "/register";
   if (isAuthPage) {
     return <div className="min-h-screen">{children}</div>;
   }
+  return <Shell>{children}</Shell>;
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const me = useFetch<MeData>("/api/auth/me");
+  const { t } = useI18n();
 
   async function logout() {
     try {

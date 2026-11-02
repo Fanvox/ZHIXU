@@ -1,6 +1,17 @@
 // 客户端 API 封装
+
+/** 登录/注册页本身不应触发「未登录跳转」，否则注册页会被立刻弹回登录页。 */
+function isAuthPath(pathname: string): boolean {
+  return (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname === "/register" ||
+    pathname.startsWith("/register/")
+  );
+}
+
 function redirectToLogin() {
-  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+  if (typeof window !== "undefined" && !isAuthPath(window.location.pathname)) {
     window.location.href = "/login";
   }
 }

@@ -14,6 +14,7 @@ import {
   Pencil,
   ChevronRight,
   AlertTriangle,
+  Eye,
 } from "lucide-react";
 import { useFetch } from "@/lib/use-fetch";
 import { api, upload as uploadFile } from "@/lib/client";
@@ -32,7 +33,7 @@ import { MasteryDot, MASTERY_META } from "@/components/mastery";
 import { EmptyState } from "@/components/empty-state";
 import { toast } from "@/components/ui/toast";
 import { Spinner } from "@/components/ui/spinner";
-import { formatDate, formatBytes } from "@/lib/utils";
+import { formatDate, formatBytes, cn } from "@/lib/utils";
 import type { CourseWithStats, Document, KnowledgeNode, MasteryStatus } from "@/lib/types";
 
 const DOC_STATUS: Record<Document["status"], { labelKey: I18nKey; variant: "secondary" | "warning" | "success" | "destructive" | "outline" }> = {
@@ -57,6 +58,11 @@ export default function CourseDetailPage() {
   const [desc, setDesc] = useState("");
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState<string | null>(null);
+  // 解析内容查看器
+  const [viewerDoc, setViewerDoc] = useState<Document | null>(null);
+  const [viewerChunks, setViewerChunks] = useState<ViewerChunk[]>([]);
+  const [viewerTotal, setViewerTotal] = useState(0);
+  const [viewerLoading, setViewerLoading] = useState(false);
 
   // ---------------- 后台处理状态轮询 ----------------
   const docs = documents.data ?? [];
@@ -64,12 +70,12 @@ export default function CourseDetailPage() {
     (d) => d.status === "pending" || d.status === "parsing" || d.status === "extracting"
   );
 
-  // 有文档在处理时，每 3 秒刷新一次状态
+  // 有文档在处理时，每 3 秒静默刷新一次状态（silent：不触发骨架屏，避免闪烁）
   useEffect(() => {
     if (!processing) return;
     const id = setInterval(() => {
-      documents.reload();
-      course.reload();
+      documents.reload({ silent: true });
+      course.reload({ silent: true });
     }, 3000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,9 +85,9 @@ export default function CourseDetailPage() {
   const prevProcessing = useRef(false);
   useEffect(() => {
     if (prevProcessing.current && !processing) {
-      documents.reload();
-      course.reload();
-      nodes.reload();
+      documents.reload({ silent: true });
+      course.reload({ silent: true });
+      nodes.reload({ silent: true });
       const failed = docs.find((d) => d.status === "failed");
       if (failed) {
         toast({ title: "资料解析失败", description: failed.parse_error ?? undefined, variant: "error" });
@@ -156,6 +162,28 @@ export default function CourseDetailPage() {
     }
   }
 
+  async function loadViewerChunks(docId: string, offset: number) {
+    setViewerLoading(true);
+    try {
+      const res = await api.get<{ total: number; chunks: ViewerChunk[] }>(
+        `/api/documents/${docId}/content?offset=${offset}&limit=10`
+      );
+      setViewerTotal(res.total);
+      setViewerChunks((prev) => (offset === 0 ? res.chunks : [...prev, ...res.chunks]));
+    } catch (e) {
+      toast({ title: e instanceof Error ? e.message : "加载失败", variant: "error" });
+    } finally {
+      setViewerLoading(false);
+    }
+  }
+
+  async function openViewer(doc: Document) {
+    setViewerDoc(doc);
+    setViewerChunks([]);
+    setViewerTotal(0);
+    await loadViewerChunks(doc.id, 0);
+  }
+
   const c = course.data;
   const breakdown = buildBreakdown(nodes.data ?? []);
 
@@ -226,14 +254,40 @@ export default function CourseDetailPage() {
                       {" · "}
                       {formatDate(d.created_at)}
                     </p>
-                    {d.status === "failed" && d.parse_error && (
-                      <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
-                        <AlertTriangle className="h-3 w-3" /> {d.parse_error}
+                    {d.parse_error && (
+                      <p
+                        className={cn(
+                          "mt-1 flex items-start gap-1 text-xs",
+                          d.status === "failed"
+                            ? "text-destructive"
+                            : "text-amber-600 dark:text-amber-400"
+                        )}
+                      >
+                        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span>{d.parse_error}</span>
+                      </p>
+                    )}
+                    {d.status === "pending" && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {d.queue_position && d.queue_position > 1
+                          ? t("course.queuePosition", { n: d.queue_position - 1 })
+                          : t("course.queueNext")}
                       </p>
                     )}
                   </div>
                   <Badge variant={st.variant}>{t(st.labelKey)}</Badge>
                   <div className="flex shrink-0 gap-1">
+                    {(d.chunk_count ?? 0) > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openViewer(d)}
+                        aria-label={t("course.viewContent")}
+                        title={t("course.viewContent")}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" onClick={() => reprocess(d.id)} disabled={reprocessing === d.id} aria-label="重新处理">
                       {reprocessing === d.id ? <Spinner /> : <RefreshCcw className="h-4 w-4" />}
                     </Button>
@@ -306,6 +360,40 @@ export default function CourseDetailPage() {
         </div>
       </div>
 
+      <Modal open={!!viewerDoc} onClose={() => setViewerDoc(null)} title={`${t("course.contentTitle")} · ${viewerDoc?.filename ?? ""}`}>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">{t("course.contentTotal", { n: viewerTotal })}</p>
+          {viewerChunks.length === 0 && !viewerLoading && (
+            <p className="text-sm text-muted-foreground">{t("course.contentEmpty")}</p>
+          )}
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+            {viewerChunks.map((chunk) => (
+              <div key={chunk.index} className="rounded-lg border bg-muted/30 p-3">
+                <p className="mb-1 text-[11px] text-muted-foreground">
+                  {t("course.chunkIndex", { n: chunk.index + 1 })}
+                  {chunk.page_start ? ` · ${t("course.chunkPage", { n: chunk.page_start })}` : ""}
+                  {chunk.section ? ` · ${chunk.section}` : ""}
+                </p>
+                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{chunk.content}</p>
+              </div>
+            ))}
+          </div>
+          {viewerChunks.length < viewerTotal && (
+            <div className="flex justify-center pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={viewerLoading}
+                onClick={() => viewerDoc && loadViewerChunks(viewerDoc.id, viewerChunks.length)}
+              >
+                {viewerLoading ? <Spinner /> : null}
+                {t("course.loadMore")}
+              </Button>
+            </div>
+          )}
+        </div>
+      </Modal>
+
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={t("course.editTitle")}>
         <div className="space-y-4">
           <div className="space-y-1.5">
@@ -324,6 +412,13 @@ export default function CourseDetailPage() {
       </Modal>
     </div>
   );
+}
+
+interface ViewerChunk {
+  index: number;
+  page_start: number | null;
+  section: string | null;
+  content: string;
 }
 
 function QuickAction({ href, icon: Icon, title, desc }: { href: string; icon: typeof Network; title: string; desc: string }) {

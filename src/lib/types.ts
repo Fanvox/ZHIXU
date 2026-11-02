@@ -68,6 +68,10 @@ export interface Document {
   page_count: number | null;
   chunk_count: number | null;
   parse_error: string | null;
+  /** 仅文档列表接口返回：后台排队位置（1 = 下一个处理） */
+  queue_position?: number | null;
+  /** 仅文档列表接口返回：是否正在被后台处理 */
+  is_processing?: boolean;
   created_at: string;
   updated_at: string;
 }

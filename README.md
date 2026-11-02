@@ -4,7 +4,7 @@
 
 > 让知识从碎片变成体系，让学习从被动接受变成主动探索。
 
-> **当前版本：v2.1.0** — 版本记录见 [CHANGELOG.md](CHANGELOG.md)
+> **当前版本：v2.2.0** — 版本记录见 [CHANGELOG.md](CHANGELOG.md)
 
 知序是一款以 **AI 知识图谱** 为核心的个性化学习平台。它把零散的课程资料（PDF / DOCX / PPTX / TXT / Markdown）转化为可视化、可探索、可追溯的知识体系，并通过知识盲区诊断与个性化学习路径，帮助学生真正理解知识点之间的联系。
 
@@ -87,12 +87,23 @@ npm run dev
 ### 常用命令
 
 ```bash
-npm run dev        # 开发服务器
+npm run dev        # 开发服务器（自动编译，改代码即时生效）
 npm run build      # 生产构建
-npm start          # 运行生产构建
+npm start          # 运行生产构建（需先 npm run build）
 npm run typecheck  # TypeScript 类型检查
 npm run lint       # ESLint
 ```
+
+> ⚠️ **不要同时运行 `npm run dev` 和 `npm start`**：两者共用同一个 `.next` 目录，
+> dev 模式会把它重写成开发产物，正在运行的生产服务器随即找不到自己的构建文件，
+> 表现为**页面能显示但所有静态资源 400、按钮全部失效、报错 `client-side exception`**。
+>
+> 切换运行方式时请按顺序操作：
+> 1. 停掉当前服务器（`Ctrl + C`）
+> 2. 删除 `.next`
+> 3. 按需执行 `npm run dev`，或 `npm run build` 后再 `npm start`
+>
+> 同理，**服务器运行期间不要执行 `npm run build`**。
 
 ### 体验完整流程
 
@@ -135,9 +146,39 @@ AI_EXTRACT_MODEL=
 # 可选：单次回复最大输出 token。推理类模型会先消耗大量 token 思考，
 # 若 AI 导师偶尔降级为演示模式，可调大此项（默认 8192）
 AI_MAX_TOKENS=8192
+# 可选：结构化 JSON 调用（知识抽取）的最大输出 token（默认 16000）
+AI_EXTRACT_MAX_TOKENS=16000
+# 可选：单次请求超时毫秒数（默认 300000）
+AI_TIMEOUT_MS=300000
+# 可选：429 / 5xx / 网络错误的重试次数（默认 2）
+AI_MAX_RETRIES=2
+# 可选：设为 1 时禁止 Base URL 指向本机/内网（防 SSRF）；用 Ollama 时保持 0
+AI_BLOCK_PRIVATE_BASE_URL=0
 ```
 
-支持任意 **OpenAI-compatible** 服务（OpenAI、DeepSeek、Moonshot、通义千问、本地 Ollama 等），只需修改 `AI_BASE_URL` 与 `AI_MODEL`。模型调用全部在服务端完成，**API Key 绝不暴露到前端**。
+上传与后台处理相关（可选）：
+
+```env
+# 上传大小上限（MB，默认 100）
+MAX_UPLOAD_SIZE_MB=100
+# 单个文档的后台处理超时（毫秒，默认 1800000 = 30 分钟）
+# 超时后该文档标记失败、队列继续处理下一个，避免永久卡住
+DOC_PROCESS_TIMEOUT_MS=1800000
+# 数据目录：部署时指向持久卷（本地默认 ./data）
+DATA_DIR=/data
+```
+
+支持任意 **OpenAI-compatible** 服务（OpenAI、DeepSeek、Moonshot、通义千问、本地 Ollama 等），只需修改 `AI_BASE_URL` 与 `AI_MODEL`。模型调用全部在服务端完成。
+
+### 接入细节与安全
+
+- **API Key 不会返回前端**：设置页只展示「是否已配置」与掩码预览（如 `sk-…abcd`），接口从不下发完整 Key。
+- **连接自检**：设置页提供「测试连接」按钮，会实际调用一次模型接口，返回耗时或具体错误（Key 无效 / Base URL 错误 / 模型不存在 / 限流等）。
+- **自动重试**：429、5xx 与网络错误会自动指数退避重试（默认 2 次）。
+- **参数兼容**：部分新版模型要求 `max_completion_tokens` 而非 `max_tokens`，会自动改用该参数重试。
+- **失败可见**：AI 调用失败降级演示引擎时，资料卡片会显示黄色提示，不再静默降级。
+- **Base URL 校验**：必须是 `http(s)://` 开头的完整地址；多用户部署可设置 `AI_BLOCK_PRIVATE_BASE_URL=1` 阻止指向内网（防 SSRF）。
+- ⚠️ **Key 的存储**：用户级 Key 以明文保存在本地 SQLite（`user_settings` 表）。本地自托管可接受；若部署给多人使用，建议只通过环境变量注入 Key，或对数据库做加密与访问控制。
 
 ### 各能力的 AI 行为
 
@@ -273,6 +314,9 @@ AI_MODEL=gpt-4o-mini
 
 - ✅ 课程增删改查、课程卡片与统计
 - ✅ 资料上传（PDF/DOCX/PPTX/TXT/MD）与解析状态流转、重新处理、删除
+- ✅ 解析质量可见：可翻页查看实际提取的文本分块（含页码/章节）
+- ✅ 上传健壮性：MIME 缺失按扩展名兜底、重复上传检测（409）、扫描版 PDF 文本过少警告、GBK 文本自动识别
+- ✅ 后台队列可靠性：单文档超时 + 看门狗 + 排队位置提示，避免大文件阻塞
 - ✅ **后台异步文档处理**：上传立即返回，后台队列解析与抽取，前端自动轮询进度，进程崩溃后可恢复
 - ✅ **生产部署支持**：`DATA_DIR` 持久卷、Dockerfile、Railway/Render/Fly 部署文档
 - ✅ **中文 bigram + BM25 检索**（改善中文分词与关键词召回）
@@ -316,7 +360,8 @@ AI_MODEL=gpt-4o-mini
 
 | 版本 | 主要变化 |
 | --- | --- |
-| **v2.1.0** | 后台异步文档处理（进度轮询 + 崩溃恢复）、`DATA_DIR` 持久卷部署、Docker 部署文档、中文 bigram + BM25 检索、AI 导师推理模型 token 修复 |
+| **v2.2.0** | AI 接入安全加固（Key 掩码、Base URL 校验、重试、兼容 `max_completion_tokens`/`temperature`、测试连接）；文档上传健壮性（队列并发+超时+看门狗、排队提示、MIME 兜底、重复上传检测、GBK 识别、扫描件警告、查看解析内容、流式写盘）；抽取模型回退链修复；轮询不再闪烁 |
+| v2.1.0 | 后台异步文档处理（进度轮询 + 崩溃恢复）、`DATA_DIR` 持久卷部署、Docker 部署文档、中文 bigram + BM25 检索、AI 导师推理模型 token 修复 |
 | v2.0.2 | 修复测验页客户端渲染异常（`useSearchParams` 缺 Suspense） |
 | v2.0.1 | 修复登录重定向死循环（失效 Cookie 导致） |
 | v2.0.0 | 用户登录/注册、界面化 AI 配置、分批知识提取、中英文切换、黑白灰主题 |

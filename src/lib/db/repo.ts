@@ -297,10 +297,18 @@ export function updateDocumentStatus(
   status: Document["status"],
   extra?: { page_count?: number; chunk_count?: number; parse_error?: string | null }
 ): void {
+  // 注意：parse_error 需要能被显式清除为 null（否则重试成功后会残留上次的错误/警告），
+  // 因此这里区分「未传该字段」（保持原值）与「显式传 null」（清空）。
+  const hasParseError = extra !== undefined && Object.prototype.hasOwnProperty.call(extra, "parse_error");
+  const params: unknown[] = [status, extra?.page_count ?? null, extra?.chunk_count ?? null];
+  if (hasParseError) params.push(extra?.parse_error ?? null);
+  params.push(now(), id);
+
   run(
     `UPDATE documents SET status = ?, page_count = COALESCE(?, page_count),
-     chunk_count = COALESCE(?, chunk_count), parse_error = COALESCE(?, parse_error), updated_at = ? WHERE id = ?`,
-    [status, extra?.page_count ?? null, extra?.chunk_count ?? null, extra?.parse_error ?? null, now(), id]
+     chunk_count = COALESCE(?, chunk_count),
+     parse_error = ${hasParseError ? "?" : "parse_error"}, updated_at = ? WHERE id = ?`,
+    params
   );
 }
 
@@ -350,6 +358,57 @@ export function addChunks(
 
 export function deleteChunks(documentId: string): void {
   run("DELETE FROM document_chunks WHERE document_id = ?", [documentId]);
+}
+
+/** 分页读取分块（用于「查看解析内容」）。 */
+export function listChunksPaged(
+  documentId: string,
+  offset: number,
+  limit: number
+): { chunks: DocumentChunk[]; total: number } {
+  const total = Number(
+    (get<{ n: number }>("SELECT COUNT(*) AS n FROM document_chunks WHERE document_id = ?", [documentId]) ?? { n: 0 }).n
+  );
+  const chunks = all<Record<string, unknown>>(
+    `SELECT id, document_id AS documentId, content, chunk_index AS chunkIndex,
+      page_start AS pageStart, page_end AS pageEnd, section, created_at AS createdAt
+     FROM document_chunks WHERE document_id = ? ORDER BY chunk_index ASC LIMIT ? OFFSET ?`,
+    [documentId, Math.max(0, limit), Math.max(0, offset)]
+  ).map((r) => ({
+    id: String(r.id),
+    document_id: String(r.documentId),
+    content: String(r.content),
+    chunk_index: Number(r.chunkIndex),
+    page_start: r.pageStart == null ? null : Number(r.pageStart),
+    page_end: r.pageEnd == null ? null : Number(r.pageEnd),
+    section: r.section == null ? null : String(r.section),
+    created_at: String(r.createdAt),
+  }));
+  return { chunks, total };
+}
+
+/** 查找同课程下同名同大小的文档（用于重复上传检测）。 */
+export function findDocumentByFilenameAndSize(
+  courseId: string,
+  filename: string,
+  sizeBytes: number
+): Document | undefined {
+  const r = get<Record<string, unknown>>(
+    `${DOC_SELECT} WHERE course_id = ? AND filename = ? AND size_bytes = ? LIMIT 1`,
+    [courseId, filename, sizeBytes]
+  );
+  return r ? rowToDocument(r) : undefined;
+}
+
+/** 列出长时间停留在中间状态的文档（供后台看门狗使用）。 */
+export function listStaleDocuments(olderThanMs: number): { id: string; user_id: string }[] {
+  const threshold = new Date(Date.now() - olderThanMs).toISOString();
+  return all<{ id: string; user_id: string }>(
+    `SELECT d.id AS id, c.owner_id AS user_id
+     FROM documents d JOIN courses c ON c.id = d.course_id
+     WHERE d.status IN ('parsing','extracting') AND d.updated_at < ?`,
+    [threshold]
+  );
 }
 
 // ---------------- Knowledge Nodes & Edges ----------------

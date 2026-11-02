@@ -50,7 +50,9 @@ export async function generateQuiz(
       },
       { role: "user", content: buildQuizPrompt(focus.length ? focus : allNodes, count) },
     ]);
-    if (generation) mode = "ai";
+    // 严格校验：若模型没有产出一道可用题目，则回退演示引擎，避免生成空测验
+    if (generation && generation.questions.length > 0) mode = "ai";
+    else generation = null;
   }
 
   if (!generation) {

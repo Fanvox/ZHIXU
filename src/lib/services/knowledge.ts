@@ -18,6 +18,8 @@ export interface ExtractionResult {
   edges: KnowledgeEdge[];
   mode: "ai" | "demo";
   demo: boolean;
+  /** 非致命提示（如部分批次失败、已降级演示引擎），会展示在界面上 */
+  warning?: string | null;
 }
 
 const SYSTEM_PROMPT =
@@ -112,32 +114,49 @@ export async function extractAndSave(
     edges,
     mode: extraction.demo ? "demo" : "ai",
     demo: extraction.demo,
+    warning: extraction.warning ?? null,
   };
 }
 
 async function runExtraction(
   chunks: { content: string; page_start: number | null; section: string | null }[],
   userId: string
-): Promise<KnowledgeExtraction & { demo: boolean }> {
+): Promise<KnowledgeExtraction & { demo: boolean; warning?: string | null }> {
   if (isAIEnabled(userId)) {
     const result = await extractWithLLMBatches(chunks, userId);
-    if (result) return { ...result, demo: false };
-    // 大模型失败时降级演示引擎
+    if (result) {
+      const partial = result.failed > 0;
+      return {
+        nodes: result.nodes,
+        edges: result.edges,
+        demo: false,
+        warning: partial
+          ? `部分批次抽取失败（${result.failed}/${result.total}），结果可能不完整，可在设置页测试 AI 连接后重新处理`
+          : null,
+      };
+    }
+    // 全部批次失败 → 降级演示引擎，并明确告知用户
+    return {
+      ...demoExtractKnowledge(chunks),
+      demo: true,
+      warning: "已配置大模型但知识抽取调用失败，本次使用演示引擎生成。请到「设置」页测试 AI 连接后重新处理资料。",
+    };
   }
-  return { ...demoExtractKnowledge(chunks), demo: true };
+  return { ...demoExtractKnowledge(chunks), demo: true, warning: null };
 }
 
 /** 分批调用大模型抽取，并把结果去重合并。 */
 async function extractWithLLMBatches(
   chunks: { content: string; page_start: number | null; section: string | null }[],
   userId: string
-): Promise<KnowledgeExtraction | null> {
+): Promise<{ nodes: KnowledgeExtraction["nodes"]; edges: KnowledgeExtraction["edges"]; failed: number; total: number } | null> {
   const totalBatches = Math.ceil(chunks.length / BATCH_SIZE);
   const indices = sampleIndices(totalBatches, MAX_BATCHES);
   const model = aiConfig(userId).extractModel; // 抽取使用独立模型（可用快速模型）
 
   const allNodes: KnowledgeExtraction["nodes"] = [];
   const allEdges: KnowledgeExtraction["edges"] = [];
+  let failed = 0;
 
   for (const bi of indices) {
     const batch = chunks.slice(bi * BATCH_SIZE, (bi + 1) * BATCH_SIZE);
@@ -154,10 +173,15 @@ async function extractWithLLMBatches(
     if (result) {
       allNodes.push(...result.nodes);
       allEdges.push(...result.edges);
+    } else {
+      failed++;
     }
   }
 
-  if (allNodes.length === 0) return null;
+  if (allNodes.length === 0) {
+    console.error("[knowledge] 全部批次抽取失败:", failed, "/", indices.length);
+    return null;
+  }
 
   // 跨批按名称去重
   const seen = new Set<string>();
@@ -169,7 +193,7 @@ async function extractWithLLMBatches(
     nodes.push(n);
   }
 
-  return { nodes, edges: allEdges };
+  return { nodes, edges: allEdges, failed, total: indices.length };
 }
 
 /** 从 [0, total-1] 中取不超过 max 个索引，尽量分散覆盖全文。 */
