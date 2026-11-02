@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Network,
@@ -58,21 +58,52 @@ export default function CourseDetailPage() {
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState<string | null>(null);
 
+  // ---------------- 后台处理状态轮询 ----------------
+  const docs = documents.data ?? [];
+  const processing = docs.some(
+    (d) => d.status === "pending" || d.status === "parsing" || d.status === "extracting"
+  );
+
+  // 有文档在处理时，每 3 秒刷新一次状态
+  useEffect(() => {
+    if (!processing) return;
+    const id = setInterval(() => {
+      documents.reload();
+      course.reload();
+    }, 3000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processing]);
+
+  // 处理结束的那一刻：刷新知识图谱并提示结果
+  const prevProcessing = useRef(false);
+  useEffect(() => {
+    if (prevProcessing.current && !processing) {
+      documents.reload();
+      course.reload();
+      nodes.reload();
+      const failed = docs.find((d) => d.status === "failed");
+      if (failed) {
+        toast({ title: "资料解析失败", description: failed.parse_error ?? undefined, variant: "error" });
+      } else {
+        toast({ title: "解析完成", description: "知识图谱已更新", variant: "success" });
+      }
+    }
+    prevProcessing.current = processing;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processing]);
+
   async function handleFile(file: File) {
     setUploading(true);
     try {
-      const res = await uploadFile<{ extraction: { node_count: number; edge_count: number; mode: string } }>(
-        `/api/courses/${courseId}/documents`,
-        file
-      );
+      await uploadFile(`/api/courses/${courseId}/documents`, file);
       toast({
-        title: "资料解析完成",
-        description: `提取 ${res.extraction.node_count} 个知识点、${res.extraction.edge_count} 条关系${res.extraction.mode === "demo" ? "（演示引擎）" : ""}`,
+        title: "文件已上传",
+        description: "正在后台解析并生成知识图谱，请稍候…",
         variant: "success",
       });
       documents.reload();
       course.reload();
-      nodes.reload();
     } catch (e) {
       toast({ title: e instanceof Error ? e.message : "上传失败", variant: "error" });
     } finally {
@@ -116,10 +147,8 @@ export default function CourseDetailPage() {
     setReprocessing(id);
     try {
       await api.post(`/api/documents/${id}`);
-      toast({ title: "已重新处理", variant: "success" });
+      toast({ title: "已加入后台处理队列", variant: "success" });
       documents.reload();
-      course.reload();
-      nodes.reload();
     } catch (e) {
       toast({ title: e instanceof Error ? e.message : "处理失败", variant: "error" });
     } finally {

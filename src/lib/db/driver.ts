@@ -3,10 +3,7 @@
 // under /supabase/migrations.
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
-import path from "node:path";
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "zhixu.db");
+import { DATA_DIR, DB_PATH } from "../paths";
 
 declare global {
   var __zhixuDb: DatabaseSync | undefined;

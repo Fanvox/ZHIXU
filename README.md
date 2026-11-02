@@ -4,6 +4,8 @@
 
 > 让知识从碎片变成体系，让学习从被动接受变成主动探索。
 
+> **当前版本：v2.1.0** — 版本记录见 [CHANGELOG.md](CHANGELOG.md)
+
 知序是一款以 **AI 知识图谱** 为核心的个性化学习平台。它把零散的课程资料（PDF / DOCX / PPTX / TXT / Markdown）转化为可视化、可探索、可追溯的知识体系，并通过知识盲区诊断与个性化学习路径，帮助学生真正理解知识点之间的联系。
 
 ---
@@ -17,7 +19,9 @@
 - [演示模式说明](#演示模式说明)
 - [项目结构](#项目结构)
 - [数据库设计](#数据库设计)
-- [部署到 Supabase + Vercel](#部署到-supabase--vercel)
+- [部署上线（路线 A：持久卷）](#部署上线路线-a持久卷)
+- [部署到 Supabase + Vercel（路线 B）](#部署到-supabase--vercel路线-b)
+- [更新日志](#更新日志)
 - [API 接口概览](#api-接口概览)
 - [已实现功能](#已实现功能)
 - [未实现 / 待完善](#未实现--待完善)
@@ -29,7 +33,7 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| **课程管理与资料上传** | 创建/编辑/删除课程；上传 PDF、DOCX、PPTX、TXT、Markdown；自动解析文本、保留章节与页码、分块存储；展示解析状态（等待处理 / 正在解析 / 正在提取知识 / 已完成 / 处理失败） |
+| **课程管理与资料上传** | 创建/编辑/删除课程；上传 PDF、DOCX、PPTX、TXT、Markdown；**上传立即返回、后台异步解析**，页面自动轮询进度（等待处理 / 正在解析 / 正在提取知识 / 已完成 / 处理失败）；自动保留章节与页码、分块存储 |
 | **AI 知识图谱生成** | 提取知识点与关系（定义、章节、难度、来源、前置/相关/包含/实例关系）；结构化 JSON 保存；知识点去重；默认标记为「待确认」；支持手动增删改 |
 | **交互式知识图谱** | React Flow 画布：节点拖动、缩放、平移、搜索、按章节/关系筛选、关联高亮、前置知识查看、分层布局；蓝色=已掌握、黄色=学习中、红色=需复习、灰色=未学习；点击节点查看详情面板 |
 | **AI 个性化学习助手** | 基于课程资料的 RAG 问答，标注来源文件与页码；知识点讲解（通俗/详细/举例/类比/代码）；苏格拉底式引导；相关知识图谱跳转 |
@@ -44,7 +48,9 @@
 - **后端**：Next.js Route Handlers（Node.js runtime）
 - **数据库**：
   - 本地开发：**SQLite**（Node 24 内置 `node:sqlite`，零原生依赖）
-  - 生产：**Supabase / PostgreSQL**（迁移 SQL 见 `supabase/migrations/`）
+  - 生产（路线 A）：**SQLite + 持久卷**，通过 `DATA_DIR` 指向挂载卷，几乎零改造即可上线
+  - 生产（路线 B，规模化）：**Supabase / PostgreSQL**（迁移 SQL 见 `supabase/migrations/`）
+- **部署**：Docker（见 [`Dockerfile`](Dockerfile)）+ 任意支持常驻进程与持久卷的平台（Railway / Render / Fly.io 等）
 - **AI**：OpenAI-compatible 接口（可配置任意供应商），服务端调用，结构化输出 + zod 校验，内置演示引擎兜底
 - **文档解析**：`unpdf`（PDF）、`mammoth`（DOCX）、`jszip`（PPTX）
 
@@ -124,8 +130,11 @@ npm run lint       # ESLint
 AI_API_KEY=sk-xxxx
 AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o-mini
-# 可选：知识抽取使用更强的模型
+# 可选：知识抽取使用更快/更便宜的模型
 AI_EXTRACT_MODEL=
+# 可选：单次回复最大输出 token。推理类模型会先消耗大量 token 思考，
+# 若 AI 导师偶尔降级为演示模式，可调大此项（默认 8192）
+AI_MAX_TOKENS=8192
 ```
 
 支持任意 **OpenAI-compatible** 服务（OpenAI、DeepSeek、Moonshot、通义千问、本地 Ollama 等），只需修改 `AI_BASE_URL` 与 `AI_MODEL`。模型调用全部在服务端完成，**API Key 绝不暴露到前端**。
@@ -196,7 +205,29 @@ zhixu/
 
 ---
 
-## 部署到 Supabase + Vercel
+## 部署上线（路线 A：持久卷）
+
+适合团队 / 小规模使用：**保持 SQLite + 本地文件存储**，只需把数据目录挂到持久卷，几乎零改造即可上线。
+完整步骤见 [`DEPLOY.md`](DEPLOY.md)，核心就三步：
+
+1. 用 [`Dockerfile`](Dockerfile) 构建镜像（或让平台自动识别）
+2. 挂载持久卷到 `/data`，并设置 `DATA_DIR=/data`
+3. 配置 AI 环境变量，生成公网域名
+
+```bash
+docker build -t zhixu .
+docker run -d -p 3000:3000 -v zhixu-data:/data -e DATA_DIR=/data \
+  -e AI_BASE_URL=https://api.deepseek.com -e AI_MODEL=deepseek-chat -e AI_API_KEY=sk-xxxx zhixu
+```
+
+> 文档处理已改为**后台异步**：上传接口立即返回，后台按队列解析并提取知识，前端轮询状态；
+> 进程重启后会自动恢复上次未完成的文档任务。
+>
+> 平台推荐：Railway / Render / Fly.io（均支持常驻进程 + 持久卷）。
+
+## 部署到 Supabase + Vercel（路线 B）
+
+用户规模变大、需要多实例横向扩展时再走这条路线（改造成本较高，需替换数据层与文件存储）：
 
 1. 在 Supabase 创建项目，在 SQL Editor 中执行 `supabase/migrations/0001_init.sql`（可选再执行 `0002_vector.sql`）。
 2. 配置 Supabase Storage 用于文件存储。
@@ -212,7 +243,7 @@ AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o-mini
 ```
 
-> 说明：当前代码的本地数据访问层以 SQLite 为运行时存储，生产环境建议将 `src/lib/db/repo.ts` 替换为基于 Supabase Client 的实现（Schema 与迁移 SQL 已完全对齐，可无缝替换）。文件上传当前保存至本地 `data/uploads/`，生产环境应改为上传至 Supabase Storage。
+> 说明：当前代码的本地数据访问层以 SQLite 为运行时存储。路线 B 需将 `src/lib/db/repo.ts` 替换为基于 Supabase Client 的实现（Schema 与迁移 SQL 已完全对齐，可无缝替换），文件上传改为 Supabase Storage，并补齐后台任务队列（Serverless 环境下进程不常驻）。
 
 ---
 
@@ -223,7 +254,7 @@ AI_MODEL=gpt-4o-mini
 | GET/POST | `/api/courses` | 课程列表 / 创建 |
 | GET/PATCH/DELETE | `/api/courses/:id` | 课程详情 / 更新 / 删除 |
 | GET | `/api/courses/:id/graph` | 知识图谱（节点+关系） |
-| GET/POST | `/api/courses/:id/documents` | 资料列表 / 上传并处理 |
+| GET/POST | `/api/courses/:id/documents` | 资料列表 / 上传（**立即返回，后台异步处理**） |
 | POST/DELETE | `/api/documents/:id` | 重新处理 / 删除 |
 | GET/POST | `/api/courses/:id/nodes` | 节点列表 / 手动新增 |
 | GET/PATCH/DELETE | `/api/nodes/:id` | 节点详情 / 更新 / 删除 |
@@ -242,6 +273,9 @@ AI_MODEL=gpt-4o-mini
 
 - ✅ 课程增删改查、课程卡片与统计
 - ✅ 资料上传（PDF/DOCX/PPTX/TXT/MD）与解析状态流转、重新处理、删除
+- ✅ **后台异步文档处理**：上传立即返回，后台队列解析与抽取，前端自动轮询进度，进程崩溃后可恢复
+- ✅ **生产部署支持**：`DATA_DIR` 持久卷、Dockerfile、Railway/Render/Fly 部署文档
+- ✅ **中文 bigram + BM25 检索**（改善中文分词与关键词召回）
 - ✅ AI 知识提取（LLM 结构化输出 + 演示引擎兜底）、去重、待确认标记
 - ✅ 交互式知识图谱（React Flow：拖动/缩放/平移/搜索/筛选/高亮/分层布局/详情面板/手动增删）
 - ✅ 掌握状态四色视觉规范与可解释规则评分
@@ -260,17 +294,33 @@ AI_MODEL=gpt-4o-mini
 - ⏳ Supabase Auth（当前为本地账号体系；生产可平滑替换，`profiles` 已按 `auth.users` 设计）
 - ⏳ 生产环境 Supabase 数据访问适配器（Schema 已就绪）
 - ⏳ 文件上传接入 Supabase Storage
-- ⏳ pgvector 语义检索的运行时接入（当前为关键词检索，迁移已备）
+- ⏳ pgvector 向量检索的运行时接入（当前为中文 bigram + BM25 关键词检索，迁移已备）
+- ⏳ 间隔重复复习（SM-2）与错题本（已评估为高价值，尚未实现）
 - ⏳ 知识关系的图内批量审核界面（当前支持单点编辑）
 - ⏳ DOCX/PPTX 的页码信息（DOCX 无分页信息，PPTX 以幻灯片号为页）
 
 ## 已知问题与后续优化
 
 - **本地 SQLite 与生产 PostgreSQL 的差异**：本地使用 `node:sqlite`（同步 API），生产需替换为 Supabase 客户端实现。可通过引入统一仓储接口进一步抽象。
-- **大文件处理为同步流水线**：当前上传接口内同步完成解析+抽取，超大 PDF 会阻塞请求；建议后续改为后台任务/队列 + 轮询状态。
-- **关键词检索的局限**：对同义词/语义匹配较弱，部署 pgvector 后可显著改善。
+- **大文件解析占用 CPU**：解析 1000+ 页 PDF 时会短暂占用事件循环，期间其他请求可能变慢；多人并发上传场景建议把解析放入 worker 线程。
+- **跨语言检索**：中文提问对英文教材的分块检索命中较弱（可用知识节点上下文兜底）；接入向量检索后可解决。
+- **关键词检索的局限**：已用中文 bigram + BM25 明显改善分词与召回，但对同义词/语义匹配仍弱，部署 pgvector 后可进一步提升。
 - **掌握度评分**：当前为透明规则评分，后续可结合答题难度加权、重复测试表现、遗忘曲线（间隔重复）进一步优化。
 - **图表性能**：知识点规模很大时（>500 节点）React Flow 渲染需引入虚拟化与增量布局。
+
+---
+
+## 更新日志
+
+各版本的关键变化如下，详细记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+| 版本 | 主要变化 |
+| --- | --- |
+| **v2.1.0** | 后台异步文档处理（进度轮询 + 崩溃恢复）、`DATA_DIR` 持久卷部署、Docker 部署文档、中文 bigram + BM25 检索、AI 导师推理模型 token 修复 |
+| v2.0.2 | 修复测验页客户端渲染异常（`useSearchParams` 缺 Suspense） |
+| v2.0.1 | 修复登录重定向死循环（失效 Cookie 导致） |
+| v2.0.0 | 用户登录/注册、界面化 AI 配置、分批知识提取、中英文切换、黑白灰主题 |
+| v1.0.0 | 首个版本：课程管理、资料解析、知识图谱、AI 导师、测验、学习路径 |
 
 ---
 

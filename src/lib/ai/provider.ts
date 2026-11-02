@@ -45,6 +45,10 @@ type ChatMessage = {
   content: string;
 };
 
+// 回复的最大输出 token。推理类模型（如 deepseek 推理模型）会先消耗大量 token 思考，
+// 默认值过小会导致最终 content 为空，因此默认给足，并支持环境变量覆盖。
+const DEFAULT_MAX_TOKENS = Number(process.env.AI_MAX_TOKENS) || 8192;
+
 /** 调用聊天补全接口，返回文本；未配置 Key 或出错时返回 null。 */
 export async function chatCompletion(
   userId: string | null | undefined,
@@ -67,7 +71,7 @@ export async function chatCompletion(
         model: opts.model ?? cfg.model,
         messages,
         temperature: opts.temperature ?? 0.4,
-        max_tokens: opts.maxTokens ?? 2048,
+        max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
       }),
       signal: controller.signal,
     });
@@ -76,10 +80,18 @@ export async function chatCompletion(
       return null;
     }
     const data = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
     };
     const content = data.choices?.[0]?.message?.content?.trim();
-    return content || null;
+    if (!content) {
+      // 常见于推理模型：token 全用于思考，finish_reason=length；调大 AI_MAX_TOKENS 可缓解
+      console.error(
+        "[ai] empty content, finish_reason:",
+        data.choices?.[0]?.finish_reason ?? "unknown"
+      );
+      return null;
+    }
+    return content;
   } catch (err) {
     console.error("[ai] chat completion error:", err);
     return null;

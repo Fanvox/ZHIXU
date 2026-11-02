@@ -262,6 +262,15 @@ export function listDocuments(courseId: string): Document[] {
   ]).map(rowToDocument);
 }
 
+/** 列出「上次进程中断时未处理完」的文档，用于服务启动后恢复后台任务。 */
+export function listInterruptedDocuments(): { id: string; user_id: string }[] {
+  return all<{ id: string; user_id: string }>(
+    `SELECT d.id AS id, c.owner_id AS user_id
+     FROM documents d JOIN courses c ON c.id = d.course_id
+     WHERE d.status IN ('pending','parsing','extracting')`
+  );
+}
+
 export function getDocument(id: string): Document | undefined {
   const r = get<Record<string, unknown>>(`${DOC_SELECT} WHERE id = ?`, [id]);
   return r ? rowToDocument(r) : undefined;

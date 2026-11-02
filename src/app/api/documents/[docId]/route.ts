@@ -1,6 +1,7 @@
 import { json, error, withDb, requireUser, handleError } from "@/lib/http";
 import { getDocument, getCourse } from "@/lib/db/repo";
-import { processDocument, removeDocument } from "@/lib/services/documents";
+import { removeDocument } from "@/lib/services/documents";
+import { enqueueDocument } from "@/lib/services/jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,8 +23,9 @@ export async function POST(_req: Request, { params }: Params) {
     if (!user) return error("未登录", 401);
     const c = withDb(() => checkDocOwnership(docId, user.id));
     if (!c.ok) return c.res;
-    const result = await processDocument(docId, user.id);
-    return json({ document: getDocument(docId), extraction: { node_count: result.nodes.length, edge_count: result.edges.length, mode: result.mode } });
+    // 加入后台队列，立即返回；前端轮询文档状态
+    enqueueDocument(docId, user.id);
+    return json({ document: getDocument(docId), queued: true });
   } catch (e) {
     return handleError(e);
   }

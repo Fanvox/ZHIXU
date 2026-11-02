@@ -5,8 +5,7 @@ import { run } from "../db/driver";
 import { getDocument, updateDocumentStatus, addChunks, deleteChunks, deleteDocument } from "../db/repo";
 import { parseDocument } from "../parser";
 import { extractAndSave, type ExtractionResult } from "./knowledge";
-
-const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
+import { UPLOAD_DIR, resolveStoragePath } from "../paths";
 
 function extOf(filename: string, mime: string): string {
   const ext = filename.split(".").pop()?.toLowerCase();
@@ -15,7 +14,11 @@ function extOf(filename: string, mime: string): string {
   return m === "plain" ? "txt" : m === "markdown" ? "md" : m;
 }
 
-/** 保存上传文件到本地磁盘，并记录 storage_path。 */
+/**
+ * 保存上传文件到磁盘，并记录 storage_path。
+ * storage_path 存储的是「相对 DATA_DIR 的路径」（如 uploads/xxx.pdf），
+ * 这样容器挂载持久卷后路径依然有效。
+ */
 export async function storeUpload(
   documentId: string,
   filename: string,
@@ -24,10 +27,14 @@ export async function storeUpload(
 ): Promise<string> {
   await mkdir(UPLOAD_DIR, { recursive: true });
   const ext = extOf(filename, mime);
-  const rel = path.join("data", "uploads", `${documentId}.${ext}`).replace(/\\/g, "/");
-  const abs = path.join(process.cwd(), rel);
+  const rel = `uploads/${documentId}.${ext}`;
+  const abs = path.join(UPLOAD_DIR, `${documentId}.${ext}`);
   await writeFile(abs, data);
-  run("UPDATE documents SET storage_path = ?, updated_at = ? WHERE id = ?", [rel, new Date().toISOString(), documentId]);
+  run("UPDATE documents SET storage_path = ?, updated_at = ? WHERE id = ?", [
+    rel,
+    new Date().toISOString(),
+    documentId,
+  ]);
   return rel;
 }
 
@@ -37,8 +44,8 @@ export async function processDocument(documentId: string, userId: string): Promi
   if (!doc) throw new Error("文档不存在");
   updateDocumentStatus(documentId, "parsing");
   try {
-    const rel = doc.storage_path ?? path.join("data", "uploads", `${documentId}.${extOf(doc.filename, doc.mime_type)}`);
-    const abs = path.isAbsolute(rel) ? rel : path.join(process.cwd(), rel);
+    const rel = doc.storage_path ?? `uploads/${documentId}.${extOf(doc.filename, doc.mime_type)}`;
+    const abs = resolveStoragePath(rel);
     const data = new Uint8Array(await readFile(abs));
     const result = await parseDocument(data, doc.mime_type, doc.filename);
     updateDocumentStatus(documentId, "extracting", { page_count: result.page_count ?? undefined });
@@ -72,7 +79,7 @@ export async function processDocument(documentId: string, userId: string): Promi
 export async function removeDocument(documentId: string): Promise<void> {
   const doc = getDocument(documentId);
   if (doc?.storage_path) {
-    const abs = path.isAbsolute(doc.storage_path) ? doc.storage_path : path.join(process.cwd(), doc.storage_path);
+    const abs = resolveStoragePath(doc.storage_path);
     try {
       await unlink(abs);
     } catch {

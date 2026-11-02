@@ -1,6 +1,7 @@
 import { json, error, withDb, requireUser, handleError } from "@/lib/http";
 import { listDocuments, createDocument, getDocument, getCourse } from "@/lib/db/repo";
-import { storeUpload, processDocument } from "@/lib/services/documents";
+import { storeUpload } from "@/lib/services/documents";
+import { enqueueDocument } from "@/lib/services/jobs";
 import { mimeToKind } from "@/lib/parser";
 
 export const runtime = "nodejs";
@@ -64,19 +65,10 @@ export async function POST(req: Request, { params }: Params) {
     );
 
     await storeUpload(doc.id, filename, mime, bytes);
-    const result = await processDocument(doc.id, user.id);
+    // 立即返回，解析与知识抽取在后台队列中执行；前端轮询文档状态
+    enqueueDocument(doc.id, user.id);
 
-    return json(
-      {
-        document: getDocument(doc.id),
-        extraction: {
-          node_count: result.nodes.length,
-          edge_count: result.edges.length,
-          mode: result.mode,
-        },
-      },
-      201
-    );
+    return json({ document: getDocument(doc.id), queued: true }, 201);
   } catch (e) {
     return handleError(e);
   }
