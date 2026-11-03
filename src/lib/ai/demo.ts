@@ -226,17 +226,9 @@ export function demoAnswer(question: string, ctx: DemoAnswerContext): DemoAnswer
     };
   }
 
-  // 检索相关分块（关键词重叠得分）
-  const scored = ctx.chunks
-    .map((c) => {
-      const tokens = tokenize(c.content);
-      const hit = tokens.filter((t) => qTokens.has(t)).length;
-      const score = tokens.length === 0 ? 0 : hit / Math.sqrt(tokens.length);
-      return { c, score };
-    })
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+  // ctx.chunks 已由 BM25 检索（searchChunks）排好序，直接沿用顺序；
+  // 不再用旧的「重叠数 / √长度」二次打分，避免把已排序的结果打乱。
+  const scored = ctx.chunks.slice(0, 3).map((c) => ({ c }));
 
   // 匹配相关知识节点
   const matchedNodes = ctx.nodes

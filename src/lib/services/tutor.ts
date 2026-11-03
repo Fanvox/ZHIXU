@@ -6,6 +6,16 @@ import { searchChunks, matchNodes } from "./retrieval";
 import { listNodes, listEdges, getNode, getCourse } from "../db/repo";
 import type { SourceRef } from "../types";
 
+export interface TutorTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** 带入模型的历史消息条数上限 */
+const HISTORY_LIMIT = 6;
+/** 单条历史消息字符上限（避免追问把上下文撑爆） */
+const HISTORY_CAP = 800;
+
 export interface TutorReply {
   content: string;
   sources: SourceRef[];
@@ -17,15 +27,25 @@ export async function tutorReply(
   courseId: string,
   question: string,
   selectedNodeId: string | null | undefined,
-  userId: string
+  userId: string,
+  history: TutorTurn[] = []
 ): Promise<TutorReply> {
   const course = getCourse(courseId);
   const nodes = listNodes(courseId);
   const edges = listEdges(courseId);
   const hits = searchChunks(courseId, question, 4);
   const nodeIds = matchNodes(courseId, question, 4);
-  const selectedNode = selectedNodeId ? getNode(selectedNodeId) ?? null : null;
+
+  // 只接受「属于本课程」的知识点，避免把其他课程/用户的节点内容注入上下文
+  const rawSelected = selectedNodeId ? getNode(selectedNodeId) ?? null : null;
+  const selectedNode = rawSelected && rawSelected.course_id === courseId ? rawSelected : null;
   if (selectedNode && !nodeIds.includes(selectedNode.id)) nodeIds.push(selectedNode.id);
+
+  // 只保留合法的历史消息，并做长度截断（用于理解「它」「上面第二点」等指代）
+  const trimmedHistory: TutorTurn[] = history
+    .filter((h) => (h.role === "user" || h.role === "assistant") && h.content.trim().length > 0)
+    .slice(-HISTORY_LIMIT)
+    .map((h) => ({ role: h.role, content: h.content.slice(0, HISTORY_CAP) }));
 
   const sources: SourceRef[] = hits.map((h) => ({
     document_id: h.document_id,
@@ -35,7 +55,10 @@ export async function tutorReply(
   }));
 
   if (isAIEnabled(userId)) {
-    const answer = await chatCompletion(userId, buildTutorMessages(course?.name ?? "", question, hits, nodes, nodeIds, selectedNode));
+    const answer = await chatCompletion(
+      userId,
+      buildTutorMessages(course?.name ?? "", question, hits, nodes, nodeIds, selectedNode, trimmedHistory)
+    );
     if (answer) {
       return { content: answer, sources, nodeRefs: nodeIds, mode: "ai" };
     }
@@ -56,7 +79,12 @@ export async function tutorReply(
     selectedNode,
   });
 
-  return { content: demo.content, sources: demo.sources.length ? demo.sources : sources, nodeRefs: demo.nodeRefs.length ? demo.nodeRefs : nodeIds, mode: "demo" };
+  return {
+    content: demo.content,
+    sources: demo.sources.length ? demo.sources : sources,
+    nodeRefs: demo.nodeRefs.length ? demo.nodeRefs : nodeIds,
+    mode: "demo",
+  };
 }
 
 function buildTutorMessages(
@@ -65,12 +93,15 @@ function buildTutorMessages(
   hits: { content: string; document_name: string; page_start: number | null; section: string | null }[],
   nodes: { id: string; name: string; definition: string | null; detail: string | null }[],
   nodeIds: string[],
-  selectedNode: { name: string; definition: string | null; detail: string | null } | null
+  selectedNode: { name: string; definition: string | null; detail: string | null } | null,
+  history: TutorTurn[]
 ) {
   const contextParts: string[] = [];
 
   if (selectedNode) {
-    contextParts.push(`当前选中的知识点：「${selectedNode.name}」\n定义：${selectedNode.definition ?? ""}\n解释：${selectedNode.detail ?? ""}`);
+    contextParts.push(
+      `当前选中的知识点：「${selectedNode.name}」\n定义：${selectedNode.definition ?? ""}\n解释：${selectedNode.detail ?? ""}`
+    );
   }
 
   const relatedNodes = nodeIds
@@ -79,8 +110,7 @@ function buildTutorMessages(
     .slice(0, 5);
   if (relatedNodes.length) {
     contextParts.push(
-      "相关知识节点：\n" +
-        relatedNodes.map((n) => `- ${n!.name}：${n!.definition ?? ""}`).join("\n")
+      "相关知识节点：\n" + relatedNodes.map((n) => `- ${n!.name}：${n!.definition ?? ""}`).join("\n")
     );
   }
 
@@ -98,8 +128,10 @@ function buildTutorMessages(
       role: "system" as const,
       content:
         `你是知序学习平台的 AI 导师，当前课程是「${courseName}」。请基于提供的课程资料与知识图谱回答学生问题。` +
-        "规则：\n1. 优先依据资料内容回答，资料中没有的不要用模型常识冒充，明确说明资料中未找到。\n2. 尽量标注来源文件与页码。\n3. 适当采用通俗解释、类比或代码示例。\n4. 在不影响理解的前提下，可用苏格拉底式提问引导学生思考。\n5. 用简体中文，回答条理清晰。",
+        "规则：\n1. 优先依据资料内容回答，资料中没有的不要用模型常识冒充，明确说明资料中未找到。\n2. 尽量标注来源文件与页码。\n3. 适当采用通俗解释、类比或代码示例。\n4. 在不影响理解的前提下，可用苏格拉底式提问引导学生思考。\n5. 若学生的问题是对前文的追问，请结合对话历史理解指代（如「它」「上面第二点」）。\n6. 用简体中文，回答条理清晰。",
     },
+    // 历史对话：用于理解追问与指代
+    ...history.map((h) => ({ role: h.role, content: h.content })),
     {
       role: "user" as const,
       content: `【课程上下文】\n${contextParts.join("\n\n") || "（无检索到上下文）"}\n\n【学生问题】\n${question}`,

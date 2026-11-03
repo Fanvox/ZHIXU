@@ -10,6 +10,7 @@ import {
   Link2,
   GraduationCap,
   ClipboardCheck,
+  MessageSquare,
 } from "lucide-react";
 import { useFetch } from "@/lib/use-fetch";
 import { useI18n } from "@/lib/i18n";
@@ -184,6 +185,12 @@ export function NodeDetailPanel({
           </div>
 
           <div className="flex flex-col gap-2 border-t pt-4">
+            <Link
+              href={`/courses/${courseId}/tutor?node=${nodeId}`}
+              className="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
+            >
+              <MessageSquare className="h-4 w-4" /> {t("graph.askTutor")}
+            </Link>
             <Link
               href={`/courses/${courseId}/quiz?node=${nodeId}`}
               className="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"

@@ -767,6 +767,11 @@ export function getChatSession(sessionId: string): { id: string; course_id: stri
   return { id: String(r.id), course_id: String(r.courseId), user_id: String(r.userId) };
 }
 
+/** 删除会话（chat_messages 通过外键 ON DELETE CASCADE 一并删除）。 */
+export function deleteChatSession(sessionId: string): void {
+  run("DELETE FROM chat_sessions WHERE id = ?", [sessionId]);
+}
+
 export function addMessage(input: {
   session_id: string;
   role: "user" | "assistant";

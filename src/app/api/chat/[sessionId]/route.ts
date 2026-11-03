@@ -1,5 +1,5 @@
 import { json, error, withDb, requireUser, handleError } from "@/lib/http";
-import { listMessages, getChatSession } from "@/lib/db/repo";
+import { listMessages, getChatSession, deleteChatSession } from "@/lib/db/repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +23,24 @@ export async function GET(_req: Request, { params }: Params) {
         created_at: m.created_at,
       }));
       return json(messages);
+    });
+  } catch (e) {
+    return handleError(e);
+  }
+}
+
+/** 删除会话（消息随外键级联删除）。 */
+export async function DELETE(_req: Request, { params }: Params) {
+  try {
+    const { sessionId } = await params;
+    const user = await requireUser();
+    if (!user) return error("未登录", 401);
+    return withDb(() => {
+      const session = getChatSession(sessionId);
+      if (!session) return error("会话不存在", 404);
+      if (session.user_id !== user.id) return error("无权访问", 403);
+      deleteChatSession(sessionId);
+      return json({ ok: true });
     });
   } catch (e) {
     return handleError(e);

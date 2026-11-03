@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Send, Sparkles, Plus, FileText, Network, Bot, User } from "lucide-react";
+import { Send, Sparkles, Plus, FileText, Network, Bot, User, X, Trash2, ChevronDown } from "lucide-react";
 import { useFetch } from "@/lib/use-fetch";
 import { useI18n } from "@/lib/i18n";
 import { api } from "@/lib/client";
@@ -23,6 +23,7 @@ interface Msg { role: "user" | "assistant"; content: string; sources?: SourceRef
 
 export default function TutorPage() {
   const { courseId } = useParams<{ courseId: string }>();
+  const router = useRouter();
   const sessions = useFetch<Session[]>(`/api/courses/${courseId}/chat`);
   const nodes = useFetch<KnowledgeNode[]>(`/api/courses/${courseId}/nodes`);
   const { t } = useI18n();
@@ -32,9 +33,21 @@ export default function TutorPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  /** 图谱页「问 AI 导师」带入的知识点 */
+  const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const nodeNames = new Map((nodes.data ?? []).map((n) => [n.id, n.name]));
+  const selectedNodeName = selectedNodeId ? nodeNames.get(selectedNodeId) : undefined;
+
+  // 从 URL 读取 ?node=（图谱页跳转）。这里不用 useSearchParams，
+  // 以避免客户端页面必须被 Suspense 包裹（Next.js 的 useSearchParams 限制）。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nodeId = new URLSearchParams(window.location.search).get("node");
+    if (nodeId) setSelectedNodeId(nodeId);
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -47,7 +60,7 @@ export default function TutorPage() {
       const msgs = await api.get<{ role: string; content: string; sources: SourceRef[]; node_refs: string[]; created_at: string }[]>(`/api/chat/${id}`);
       setMessages(msgs.map((m) => ({ role: m.role as "user" | "assistant", content: m.content, sources: m.sources, nodeRefs: m.node_refs })));
     } catch {
-      toast({ title: "加载会话失败", variant: "error" });
+      toast({ title: t("tutor.loadFailed"), variant: "error" });
     } finally {
       setLoadingMsgs(false);
     }
@@ -56,6 +69,29 @@ export default function TutorPage() {
   function newChat() {
     setSessionId("");
     setMessages([]);
+    clearNodeContext();
+  }
+
+  function clearNodeContext() {
+    setSelectedNodeId("");
+    router.replace(`/courses/${courseId}/tutor`);
+  }
+
+  async function deleteSession() {
+    if (!sessionId) return;
+    if (typeof window !== "undefined" && !window.confirm(t("tutor.deleteSessionConfirm"))) return;
+    setDeleting(true);
+    try {
+      await api.del(`/api/chat/${sessionId}`);
+      toast({ title: t("tutor.sessionDeleted"), variant: "success" });
+      setSessionId("");
+      setMessages([]);
+      sessions.reload({ silent: true });
+    } catch (e) {
+      toast({ title: e instanceof Error ? e.message : t("toast.saveFailed"), variant: "error" });
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function send() {
@@ -67,17 +103,19 @@ export default function TutorPage() {
     try {
       const res = await api.post<{ session_id: string; reply: { content: string; sources: SourceRef[]; nodeRefs: string[]; mode: string } }>(
         `/api/courses/${courseId}/chat`,
-        { question: q, session_id: sessionId || undefined }
+        { question: q, session_id: sessionId || undefined, selected_node_id: selectedNodeId || undefined }
       );
       setSessionId(res.session_id);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: res.reply.content, sources: res.reply.sources, nodeRefs: res.reply.nodeRefs },
       ]);
-      sessions.reload();
+      sessions.reload({ silent: true });
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "发送失败", variant: "error" });
-      setMessages((prev) => [...prev, { role: "assistant", content: "抱歉，暂时无法回答，请稍后再试。" }]);
+      // 失败时不伪造助手消息，改为提示并把问题放回输入框，方便重试
+      toast({ title: e instanceof Error ? e.message : t("tutor.sendFailed"), variant: "error" });
+      setMessages((prev) => prev.slice(0, -1));
+      setInput(q);
     } finally {
       setSending(false);
     }
@@ -87,14 +125,21 @@ export default function TutorPage() {
     <div className="space-y-4">
       <CourseNav courseId={courseId} />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div>
           <h1 className="text-lg font-semibold">{t("tutor.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("tutor.subtitle")}</p>
         </div>
-        <Button variant="outline" onClick={newChat}>
-          <Plus className="h-4 w-4" /> {t("tutor.newChat")}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {sessionId && (
+            <Button variant="ghost" size="sm" onClick={deleteSession} disabled={deleting} title={t("tutor.deleteSession")}>
+              {deleting ? <Spinner /> : <Trash2 className="h-4 w-4" />}
+            </Button>
+          )}
+          <Button variant="outline" onClick={newChat}>
+            <Plus className="h-4 w-4" /> {t("tutor.newChat")}
+          </Button>
+        </div>
       </div>
 
       {/* 会话列表 */}
@@ -126,9 +171,7 @@ export default function TutorPage() {
               </div>
               <div>
                 <p className="font-medium">{t("tutor.emptyTitle")}</p>
-                <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                  {t("tutor.emptyDesc")}
-                </p>
+                <p className="mt-1 max-w-sm text-sm text-muted-foreground">{t("tutor.emptyDesc")}</p>
               </div>
             </div>
           )}
@@ -143,7 +186,23 @@ export default function TutorPage() {
         </div>
 
         {/* Input */}
-        <div className="border-t p-3">
+        <div className="space-y-2 border-t p-3">
+          {selectedNodeId && (
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+              <Network className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="flex-1 truncate">
+                {t("tutor.nodeContext", { name: selectedNodeName ?? t("tutor.nodeFallback") })}
+              </span>
+              <button
+                type="button"
+                onClick={clearNodeContext}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label={t("tutor.clearNodeContext")}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <div className="flex items-end gap-2">
             <Textarea
               value={input}
@@ -171,6 +230,17 @@ export default function TutorPage() {
 function MessageBubble({ msg, nodeNames, courseId }: { msg: Msg; nodeNames: Map<string, string>; courseId: string }) {
   const { t } = useI18n();
   const isUser = msg.role === "user";
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  function toggleSource(i: number) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+
   return (
     <div className={cn("mb-4 flex gap-3", isUser && "flex-row-reverse")}>
       <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full", isUser ? "bg-muted" : "bg-primary/10 text-primary")}>
@@ -183,12 +253,28 @@ function MessageBubble({ msg, nodeNames, courseId }: { msg: Msg; nodeNames: Map<
           <>
             <MiniMarkdown text={msg.content} />
             {msg.sources && msg.sources.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-2">
+              <div className="mt-3 space-y-1 border-t pt-2">
                 {msg.sources.map((s, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 rounded-md bg-background px-2 py-1 text-[11px] text-muted-foreground">
-                    <FileText className="h-3 w-3" /> {s.document_name}
-                    {s.page != null && ` · 第${s.page}页`}
-                  </span>
+                  <div key={i} className="rounded-md bg-background px-2 py-1 text-[11px] text-muted-foreground">
+                    <button
+                      type="button"
+                      onClick={() => toggleSource(i)}
+                      className="flex w-full items-center gap-1 text-left"
+                      title={t("tutor.expandSnippet")}
+                    >
+                      <FileText className="h-3 w-3 shrink-0" />
+                      <span className="truncate">
+                        {s.document_name}
+                        {s.page != null && ` · ${t("course.chunkPage", { n: s.page })}`}
+                      </span>
+                      {s.snippet && (
+                        <ChevronDown className={cn("ml-auto h-3 w-3 shrink-0 transition-transform", expanded.has(i) && "rotate-180")} />
+                      )}
+                    </button>
+                    {expanded.has(i) && s.snippet && (
+                      <p className="mt-1 border-l-2 border-primary/30 pl-2 leading-relaxed">{s.snippet}…</p>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
@@ -201,7 +287,7 @@ function MessageBubble({ msg, nodeNames, courseId }: { msg: Msg; nodeNames: Map<
                     href={`/courses/${courseId}/graph?node=${id}`}
                     className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-accent-foreground hover:underline"
                   >
-                    <Network className="h-3 w-3" /> {nodeNames.get(id) ?? "知识点"}
+                    <Network className="h-3 w-3" /> {nodeNames.get(id) ?? t("tutor.nodeFallback")}
                   </Link>
                 ))}
               </div>
